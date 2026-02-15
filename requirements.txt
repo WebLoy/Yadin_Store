@@ -3,4 +3,5 @@ pandas
 python-barcode
 streamlit-qrcode-scanner
 Pillow
-st-gsheets-connection
+
+
