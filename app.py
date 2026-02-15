@@ -34,8 +34,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- CONNECTION ---
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- REPAIRED CONNECTION (STEP 2) ---
+# This matches your simplified Secrets format exactly
+conn = st.connection("gsheets", type=GSheetsConnection, 
+                     spreadsheet=st.secrets["spreadsheet"],
+                     service_account=st.secrets["service_account"])
 
 # --- MASTER FUNCTIONS ---
 def save_all(manual=False):
@@ -212,7 +215,6 @@ elif nav == "Admin Portal":
         t1, t2, t3, t4, t5 = st.tabs(["📋 List", "➕ Add", "✏️ Edit", "🏷️ Label", "⚙️ Settings"])
         
         with t1:
-            # SAFETY CHECK: Ensure Image_Data exists before dropping for view
             if 'Image_Data' in st.session_state.inventory.columns:
                 st.dataframe(st.session_state.inventory.drop(columns=['Image_Data']), use_container_width=True)
             else:
@@ -227,7 +229,7 @@ elif nav == "Admin Portal":
                     st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True); save_all(); st.rerun()
         with t3:
             if not st.session_state.inventory.empty:
-                target = st.selectbox("Select Product to Edit", st.session_state.inventory['Name'].unique())
+                target = st.selectbox("Select to Edit", st.session_state.inventory['Name'].unique())
                 idx = st.session_state.inventory[st.session_state.inventory['Name'] == target].index[0]
                 item = st.session_state.inventory.loc[idx]
                 with st.form("edit"):
@@ -238,39 +240,42 @@ elif nav == "Admin Portal":
                     if c_upd.form_submit_button("💾 Update"):
                         st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, process_image(ei) if ei else item['Image_Data'], ed]; save_all(); st.rerun()
                     
-                    delete_trigger = c_del.form_submit_button("🗑️ Delete Product")
+                    delete_trigger = c_del.form_submit_button("🗑️ Delete")
                     if delete_trigger:
                         st.session_state.confirm_delete = idx
                 
                 if "confirm_delete" in st.session_state and st.session_state.confirm_delete == idx:
-                    st.error(f"⚠️ Are you sure you want to delete '{item['Name']}'?")
+                    st.error(f"⚠️ Delete '{item['Name']}'?")
                     cd1, cd2 = st.columns(2)
-                    if cd1.button("🔥 YES, DELETE"):
+                    if cd1.button("🔥 YES"):
                         st.session_state.inventory = st.session_state.inventory.drop(idx)
                         del st.session_state.confirm_delete
                         save_all(); st.rerun()
-                    if cd2.button("❌ CANCEL"):
+                    if cd2.button("❌ NO"):
                         del st.session_state.confirm_delete
                         st.rerun()
 
         with t4:
             if not st.session_state.inventory.empty:
-                l_target = st.selectbox("Product for Label", st.session_state.inventory['Name'].unique())
+                l_target = st.selectbox("Label Product", st.session_state.inventory['Name'].unique())
                 l_item = st.session_state.inventory[st.session_state.inventory['Name'] == l_target].iloc[0]
                 l_img = generate_custom_label(l_item['Barcode'], l_item['Name'], 300, 200)
                 st.image(l_img)
                 buf = BytesIO(); l_img.save(buf, "PNG")
-                st.download_button("📥 Download Label", buf.getvalue(), f"label_{l_item['Barcode']}.png")
+                st.download_button("📥 Download", buf.getvalue(), f"label_{l_item['Barcode']}.png")
         with t5:
-            st.subheader("💾 Management & Branding")
-            uploaded_backup = st.file_uploader("Restore Inventory from CSV", type=['csv'])
+            st.subheader("💾 Backup & Restore")
+            uploaded_backup = st.file_uploader("Restore Inventory (CSV)", type=['csv'])
             if uploaded_backup and st.button("Confirm Restore"):
-                # RESTORE PROTECTION: Fix missing columns on the fly
+                # REPAIRED RESTORE: Ensure Image_Data is preserved and cleaned
                 new_data = pd.read_csv(uploaded_backup, dtype={'Barcode': str})
                 required_cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
                 for col in required_cols:
                     if col not in new_data.columns:
-                        new_data[col] = "" # Add missing column to prevent KeyError
+                        new_data[col] = "" 
+                
+                # Critical fix for missing images: fill NaN Image_Data with empty strings
+                new_data['Image_Data'] = new_data['Image_Data'].fillna("")
                 
                 st.session_state.inventory = new_data
                 save_all(); st.rerun()
@@ -279,7 +284,7 @@ elif nav == "Admin Portal":
             new_logo = st.file_uploader("Update Logo", type=['jpg', 'png'])
             if new_logo and st.button("Save Logo"):
                 with open(LOGO_FILE, "wb") as f: f.write(new_logo.getbuffer())
-                st.success("Logo Updated!"); st.rerun()
+                st.success("Updated!"); st.rerun()
             with st.form("branding"):
                 sn, ad, dt, br, ph, em, fm, fc = st.text_input("Store Name", st.session_state.settings.get('Store Name','')), st.text_input("Address", st.session_state.settings.get('Address','')), st.text_input("DTI", st.session_state.settings.get('DTI','')), st.text_input("BIR", st.session_state.settings.get('BIR','')), st.text_input("Phone", st.session_state.settings.get('Phone','')), st.text_input("Email", st.session_state.settings.get('Email','')), st.text_input("Montevista FB", st.session_state.settings.get('FB_Montevista','')), st.text_input("Compostela FB", st.session_state.settings.get('FB_Compostela',''))
                 if st.form_submit_button("Save Details"):
