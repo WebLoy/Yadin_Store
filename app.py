@@ -7,8 +7,6 @@ from barcode.writer import ImageWriter
 from io import BytesIO
 from streamlit_qrcode_scanner import qrcode_scanner
 from PIL import Image, ImageDraw, ImageFont
-# --- ADDED: Google Sheets Connection ---
-from streamlit_gsheets import GSheetsConnection
 
 # --- FILE PATHS ---
 DB_FILE = "inventory.csv"
@@ -93,35 +91,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- GOOGLE SHEETS CONNECTION ---
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# --- FUNCTIONS (Moved Up for Initialization Use) ---
+# --- FUNCTIONS ---
 def save_all():
-    # 1. Save Inventory to Cloud
-    try:
-        conn.update(worksheet="Inventory", data=st.session_state.inventory)
-        st.session_state.inventory.to_csv(DB_FILE, index=False)
-    except Exception as e:
-        st.error(f"Cloud Inventory Sync Failed: {e}")
-
-    # 2. Save Settings to Cloud
-    try:
-        settings_df = pd.DataFrame([st.session_state.settings])
-        conn.update(worksheet="Settings", data=settings_df)
-        settings_df.to_csv(SETTINGS_FILE, index=False)
-    except Exception as e:
-        st.error(f"Cloud Settings Sync Failed: {e}")
-
-    # 3. Save Admin Credentials to Cloud
-    try:
-        if os.path.exists(AUTH_FILE):
-            admin_df = pd.read_csv(AUTH_FILE)
-            conn.update(worksheet="Admin", data=admin_df)
-    except Exception as e:
-        st.error(f"Cloud Admin Sync Failed: {e}")
-        
-    st.toast("✅ EVERYTHING Saved to Cloud!")
+    # Save Inventory to Local CSV
+    st.session_state.inventory.to_csv(DB_FILE, index=False)
+    # Save Settings to Local CSV
+    pd.DataFrame([st.session_state.settings]).to_csv(SETTINGS_FILE, index=False)
+    st.toast("✅ Data Saved Locally!")
 
 def process_image(uploaded_file):
     if uploaded_file is not None:
@@ -137,46 +113,29 @@ def process_image(uploaded_file):
 
 # --- INITIALIZATION ---
 if 'inventory' not in st.session_state:
-    try:
-        # Load Inventory
-        df = conn.read(worksheet="Inventory", ttl=0)
-        df['Barcode'] = df['Barcode'].astype(str)
-        required_cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
-        for col in required_cols:
-            if col not in df.columns: df[col] = ""
-        st.session_state.inventory = df
-
-        # Load Settings
-        settings_df = conn.read(worksheet="Settings", ttl=0)
-        if not settings_df.empty:
-            st.session_state.settings = settings_df.iloc[0].to_dict()
-        else:
-            raise Exception("Settings Empty")
-
-        # Load Admin (and save to local file so login check works)
-        admin_df = conn.read(worksheet="Admin", ttl=0)
-        if not admin_df.empty:
-            admin_df.to_csv(AUTH_FILE, index=False)
-
-    except Exception:
-        # Fallback to local
-        if os.path.exists(DB_FILE):
-            st.session_state.inventory = pd.read_csv(DB_FILE, dtype={'Barcode': str})
-        else:
-            st.session_state.inventory = pd.DataFrame(columns=["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"])
-        
-        if os.path.exists(SETTINGS_FILE):
-            st.session_state.settings = pd.read_csv(SETTINGS_FILE).iloc[0].to_dict()
-        else:
-            st.session_state.settings = {
-                "Store Name": "Yadin's Baligya Barato", "DTI": "Pending", "BIR": "Pending",
-                "Address": "Philippines", "Phone": "", "Email": "",
-                "FB_Montevista": "https://www.facebook.com/yadin.s.baligya.barato",
-                "FB_Compostela": "https://www.facebook.com/yadin.s.baligya.barato.nabunturan"
-            }
+    if os.path.exists(DB_FILE):
+        st.session_state.inventory = pd.read_csv(DB_FILE, dtype={'Barcode': str})
+    else:
+        st.session_state.inventory = pd.DataFrame(
+            columns=["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
+        )
 
 if 'Description' not in st.session_state.inventory.columns:
     st.session_state.inventory['Description'] = ""
+
+if os.path.exists(SETTINGS_FILE):
+    st.session_state.settings = pd.read_csv(SETTINGS_FILE).iloc[0].to_dict()
+else:
+    st.session_state.settings = {
+        "Store Name": "Yadin's Baligya Barato",
+        "DTI": "Pending",
+        "BIR": "Pending",
+        "Address": "Philippines",
+        "Phone": "",
+        "Email": "",
+        "FB_Montevista": "https://www.facebook.com/yadin.s.baligya.barato",
+        "FB_Compostela": "https://www.facebook.com/yadin.s.baligya.barato.nabunturan"
+    }
 
 if 'selected_product_barcode' not in st.session_state:
     st.session_state.selected_product_barcode = None
@@ -277,12 +236,7 @@ def show_product_card(item, detailed=False):
 def update_credentials(new_user, new_pass, new_email):
     creds = pd.DataFrame([{"user": new_user, "pass": new_pass, "email": new_email}])
     creds.to_csv(AUTH_FILE, index=False)
-    # Trigger cloud save immediately
-    try:
-        conn.update(worksheet="Admin", data=creds)
-        st.success("Credentials Cloud-Synced! Please login again.")
-    except:
-        st.warning("Saved locally, but Cloud sync failed.")
+    st.success("Credentials Updated! Please login again.")
     st.session_state.authenticated = False
     st.rerun()
 
@@ -372,10 +326,6 @@ elif nav == "Admin Portal":
     if check_auth():
         display_header()
         
-        # --- Manual Sync Button ---
-        if st.button("🔄 Force Cloud Sync (Save Everything)"):
-            save_all()
-        
         t1, t2, t3, t4, t5 = st.tabs(["📋 List", "➕ Add", "✏️ Edit", "🏷️ Label", "⚙️ Settings"])
         with t1: st.dataframe(st.session_state.inventory.drop(columns=['Image_Data']), use_container_width=True)
         with t2:
@@ -387,7 +337,7 @@ elif nav == "Admin Portal":
                     if b in st.session_state.inventory['Barcode'].values: st.error("Barcode exists!")
                     else:
                         new_row = pd.DataFrame([{"Barcode": b, "Name": n, "Category": cat, "Price": p, "Quantity": q, "Min_Threshold": 5, "Image_Data": process_image(img), "Description": desc}])
-                        st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True); save_all(); st.success("Added & Cloud Saved!")
+                        st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True); save_all(); st.success("Added Locally!")
         with t3:
             if not st.session_state.inventory.empty:
                 target = st.selectbox("Select Product", st.session_state.inventory['Name'].unique())
@@ -399,7 +349,7 @@ elif nav == "Admin Portal":
                     c_s, c_d = st.columns(2)
                     if c_s.form_submit_button("💾 Save"):
                         st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, process_image(ei) if ei else item['Image_Data'], ed]
-                        save_all(); st.success("Updated & Cloud Saved!"); st.rerun()
+                        save_all(); st.success("Updated Locally!"); st.rerun()
                     if c_d.form_submit_button("🗑️ Delete"):
                         st.session_state.inventory = st.session_state.inventory.drop(idx); save_all(); st.warning("Deleted!"); st.rerun()
         with t4:
