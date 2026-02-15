@@ -210,7 +210,14 @@ elif nav == "Admin Portal":
         display_header()
         if st.button("🔄 Force Cloud Sync"): save_all(manual=True)
         t1, t2, t3, t4, t5 = st.tabs(["📋 List", "➕ Add", "✏️ Edit", "🏷️ Label", "⚙️ Settings"])
-        with t1: st.dataframe(st.session_state.inventory.drop(columns=['Image_Data']), use_container_width=True)
+        
+        with t1:
+            # SAFETY CHECK: Ensure Image_Data exists before dropping for view
+            if 'Image_Data' in st.session_state.inventory.columns:
+                st.dataframe(st.session_state.inventory.drop(columns=['Image_Data']), use_container_width=True)
+            else:
+                st.dataframe(st.session_state.inventory, use_container_width=True)
+                
         with t2:
             with st.form("add"):
                 b, n, p, q = st.text_input("Barcode"), st.text_input("Name"), st.number_input("Price", 0.0), st.number_input("Stock", 0)
@@ -220,7 +227,7 @@ elif nav == "Admin Portal":
                     st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True); save_all(); st.rerun()
         with t3:
             if not st.session_state.inventory.empty:
-                target = st.selectbox("Select to Edit", st.session_state.inventory['Name'].unique())
+                target = st.selectbox("Select Product to Edit", st.session_state.inventory['Name'].unique())
                 idx = st.session_state.inventory[st.session_state.inventory['Name'] == target].index[0]
                 item = st.session_state.inventory.loc[idx]
                 with st.form("edit"):
@@ -231,7 +238,6 @@ elif nav == "Admin Portal":
                     if c_upd.form_submit_button("💾 Update"):
                         st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, process_image(ei) if ei else item['Image_Data'], ed]; save_all(); st.rerun()
                     
-                    # --- RESTORED FEATURE: DELETE CONFIRMATION ---
                     delete_trigger = c_del.form_submit_button("🗑️ Delete Product")
                     if delete_trigger:
                         st.session_state.confirm_delete = idx
@@ -256,8 +262,19 @@ elif nav == "Admin Portal":
                 buf = BytesIO(); l_img.save(buf, "PNG")
                 st.download_button("📥 Download Label", buf.getvalue(), f"label_{l_item['Barcode']}.png")
         with t5:
-            uploaded_backup = st.file_uploader("Restore Inventory", type=['csv'])
-            if uploaded_backup and st.button("Confirm Restore"): st.session_state.inventory = pd.read_csv(uploaded_backup, dtype={'Barcode': str}); save_all(); st.rerun()
+            st.subheader("💾 Management & Branding")
+            uploaded_backup = st.file_uploader("Restore Inventory from CSV", type=['csv'])
+            if uploaded_backup and st.button("Confirm Restore"):
+                # RESTORE PROTECTION: Fix missing columns on the fly
+                new_data = pd.read_csv(uploaded_backup, dtype={'Barcode': str})
+                required_cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
+                for col in required_cols:
+                    if col not in new_data.columns:
+                        new_data[col] = "" # Add missing column to prevent KeyError
+                
+                st.session_state.inventory = new_data
+                save_all(); st.rerun()
+                
             st.divider()
             new_logo = st.file_uploader("Update Logo", type=['jpg', 'png'])
             if new_logo and st.button("Save Logo"):
