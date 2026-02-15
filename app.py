@@ -272,24 +272,35 @@ elif nav == "Admin Portal":
                 buf = BytesIO(); l_img.save(buf, "PNG")
                 st.download_button("📥 Download Label", buf.getvalue(), f"label_{l_item['Barcode']}.png")
         with t5:
-            st.subheader("💾 Management & Branding")
-            uploaded_backup = st.file_uploader("Restore Inventory from CSV", type=['csv'])
-            if uploaded_backup and st.button("Confirm Restore"):
-                new_data = pd.read_csv(uploaded_backup, dtype={'Barcode': str}).fillna("")
-                required_cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
-                for col in required_cols:
-                    if col not in new_data.columns:
-                        new_data[col] = "" 
-                
-                st.session_state.inventory = new_data
-                save_all(); st.rerun()
+            st.subheader("💾 Master Export & Backup")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                csv_data = st.session_state.inventory.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Full Inventory Backup (CSV)",
+                    data=csv_data,
+                    file_name=f"inventory_backup_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+                    mime='text/csv',
+                    help="Click here to save a full copy of your inventory, including all image data, to your computer."
+                )
+            with col_b:
+                uploaded_backup = st.file_uploader("Restore from Backup", type=['csv'])
+                if uploaded_backup and st.button("🔥 Confirm Restore"):
+                    new_data = pd.read_csv(uploaded_backup, dtype={'Barcode': str}).fillna("")
+                    for col in ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]:
+                        if col not in new_data.columns: new_data[col] = "" 
+                    st.session_state.inventory = new_data
+                    save_all(); st.rerun()
                 
             st.divider()
+            st.subheader("🎨 Branding & Logo")
             new_logo = st.file_uploader("Update Logo", type=['jpg', 'png'])
             if new_logo and st.button("Save Logo"):
                 with open(LOGO_FILE, "wb") as f: f.write(new_logo.getbuffer())
                 st.success("Logo Updated!"); st.rerun()
             with st.form("branding"):
                 sn, ad, dt, br, ph, em, fm, fc = st.text_input("Store Name", st.session_state.settings.get('Store Name','')), st.text_input("Address", st.session_state.settings.get('Address','')), st.text_input("DTI", st.session_state.settings.get('DTI','')), st.text_input("BIR", st.session_state.settings.get('BIR','')), st.text_input("Phone", st.session_state.settings.get('Phone','')), st.text_input("Email", st.session_state.settings.get('Email','')), st.text_input("Montevista FB", st.session_state.settings.get('FB_Montevista','')), st.text_input("Compostela FB", st.session_state.settings.get('FB_Compostela',''))
-                if st.form_submit_button("Save Details"):
-                    st.session_state.settings.update({"Store Name": sn, "Address": ad, "DTI": dt, "BIR": br, "Phone": ph, "Email": em, "FB_Montevista": fm, "FB_Compostela": fc}); save_all(); st.rerun()
+                if st.form_submit_button("💾 Save All Store Details & Sync"):
+                    st.session_state.settings.update({"Store Name": sn, "Address": ad, "DTI": dt, "BIR": br, "Phone": ph, "Email": em, "FB_Montevista": fm, "FB_Compostela": fc})
+                    save_all(manual=True) # This triggers both CSV and Google Sheets save
+                    st.rerun()
