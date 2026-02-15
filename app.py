@@ -7,6 +7,8 @@ from barcode.writer import ImageWriter
 from io import BytesIO
 from streamlit_qrcode_scanner import qrcode_scanner
 from PIL import Image, ImageDraw, ImageFont
+# --- ADDED: Google Sheets Connection ---
+from streamlit_gsheets import GSheetsConnection
 
 # --- FILE PATHS ---
 DB_FILE = "inventory.csv"
@@ -91,14 +93,32 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- INITIALIZATION ---
-if os.path.exists(DB_FILE):
-    st.session_state.inventory = pd.read_csv(DB_FILE, dtype={'Barcode': str})
-    if 'Description' not in st.session_state.inventory.columns:
-        st.session_state.inventory['Description'] = ""
-else:
-    st.session_state.inventory = pd.DataFrame(
-        columns=["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"])
+# --- GOOGLE SHEETS CONNECTION ---
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# --- INITIALIZATION (UPDATED TO LOAD FROM CLOUD) ---
+if 'inventory' not in st.session_state:
+    try:
+        # Try loading from Google Sheets first
+        df = conn.read(worksheet="Inventory", ttl=0)
+        # Fix barcode format (prevent 1.23E+12 issue)
+        df['Barcode'] = df['Barcode'].astype(str)
+        # Ensure all columns exist
+        required_cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = ""
+        st.session_state.inventory = df
+    except Exception:
+        # Fallback to local or empty if connection fails
+        if os.path.exists(DB_FILE):
+            st.session_state.inventory = pd.read_csv(DB_FILE, dtype={'Barcode': str})
+        else:
+            st.session_state.inventory = pd.DataFrame(
+                columns=["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"])
+
+if 'Description' not in st.session_state.inventory.columns:
+    st.session_state.inventory['Description'] = ""
 
 if os.path.exists(SETTINGS_FILE):
     st.session_state.settings = pd.read_csv(SETTINGS_FILE).iloc[0].to_dict()
@@ -119,8 +139,16 @@ if 'selected_product_barcode' not in st.session_state:
 
 # --- FUNCTIONS ---
 def save_all():
+    # 1. Save to Local CSV (Backup)
     st.session_state.inventory.to_csv(DB_FILE, index=False)
     pd.DataFrame([st.session_state.settings]).to_csv(SETTINGS_FILE, index=False)
+    
+    # 2. Save to Google Sheets (Auto-Save)
+    try:
+        conn.update(worksheet="Inventory", data=st.session_state.inventory)
+        st.toast("✅ Auto-Saved to Google Cloud!")
+    except Exception as e:
+        st.error(f"Cloud Save Failed: {e}")
 
 def process_image(uploaded_file):
     if uploaded_file is not None:
@@ -318,6 +346,16 @@ if nav == "Customer View":
 elif nav == "Admin Portal":
     if check_auth():
         display_header()
+        
+        # --- ADDED: Manual Sync Button ---
+        if st.button("🔄 Force Cloud Sync (Google Sheets)"):
+            try:
+                conn.update(worksheet="Inventory", data=st.session_state.inventory)
+                st.success("Synced to Google Sheets!")
+            except Exception as e:
+                st.error(f"Sync Failed: {e}")
+        # ---------------------------------
+        
         t1, t2, t3, t4, t5 = st.tabs(["📋 List", "➕ Add", "✏️ Edit", "🏷️ Label", "⚙️ Settings"])
         with t1: st.dataframe(st.session_state.inventory.drop(columns=['Image_Data']), use_container_width=True)
         with t2:
@@ -329,7 +367,7 @@ elif nav == "Admin Portal":
                     if b in st.session_state.inventory['Barcode'].values: st.error("Barcode exists!")
                     else:
                         new_row = pd.DataFrame([{"Barcode": b, "Name": n, "Category": cat, "Price": p, "Quantity": q, "Min_Threshold": 5, "Image_Data": process_image(img), "Description": desc}])
-                        st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True); save_all(); st.success("Added!")
+                        st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True); save_all(); st.success("Added & Cloud Saved!")
         with t3:
             if not st.session_state.inventory.empty:
                 target = st.selectbox("Select Product", st.session_state.inventory['Name'].unique())
@@ -341,7 +379,7 @@ elif nav == "Admin Portal":
                     c_s, c_d = st.columns(2)
                     if c_s.form_submit_button("💾 Save"):
                         st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, process_image(ei) if ei else item['Image_Data'], ed]
-                        save_all(); st.success("Updated!"); st.rerun()
+                        save_all(); st.success("Updated & Cloud Saved!"); st.rerun()
                     if c_d.form_submit_button("🗑️ Delete"):
                         st.session_state.inventory = st.session_state.inventory.drop(idx); save_all(); st.warning("Deleted!"); st.rerun()
         with t4:
