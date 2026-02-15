@@ -51,7 +51,7 @@ def save_all():
         if os.path.exists(AUTH_FILE):
             admin_df = pd.read_csv(AUTH_FILE)
             conn.update(worksheet="Admin", data=admin_df)
-        st.toast("🚀 Cloud Synced Successfully!")
+        st.toast("🚀 EVERYTHING Auto-Saved to Cloud!")
     except Exception as e:
         st.error(f"Cloud Save Failed: {e}")
 
@@ -84,28 +84,38 @@ if 'inventory' not in st.session_state:
     try:
         df = conn.read(worksheet="Inventory", ttl=0)
         df['Barcode'] = df['Barcode'].astype(str)
+        required_cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
+        for col in required_cols:
+            if col not in df.columns: df[col] = ""
         st.session_state.inventory = df
+
         settings_df = conn.read(worksheet="Settings", ttl=0)
         if not settings_df.empty: st.session_state.settings = settings_df.iloc[0].to_dict()
+        
         admin_df = conn.read(worksheet="Admin", ttl=0)
         if not admin_df.empty: admin_df.to_csv(AUTH_FILE, index=False)
     except:
-        if os.path.exists(DB_FILE): st.session_state.inventory = pd.read_csv(DB_FILE, dtype={'Barcode': str})
-        else: st.session_state.inventory = pd.DataFrame(columns=["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"])
-        if os.path.exists(SETTINGS_FILE): st.session_state.settings = pd.read_csv(SETTINGS_FILE).iloc[0].to_dict()
-        else: st.session_state.settings = {"Store Name": "Yadin's Baligya Barato", "DTI": "Pending", "BIR": "Pending", "Address": "Philippines", "Phone": "", "Email": "", "FB_Montevista": "", "FB_Compostela": ""}
+        if os.path.exists(DB_FILE):
+            st.session_state.inventory = pd.read_csv(DB_FILE, dtype={'Barcode': str})
+        else:
+            st.session_state.inventory = pd.DataFrame(columns=["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"])
+        
+        if os.path.exists(SETTINGS_FILE):
+            st.session_state.settings = pd.read_csv(SETTINGS_FILE).iloc[0].to_dict()
+        else:
+            st.session_state.settings = {"Store Name": "Yadin's Baligya Barato", "Address": "Philippines"}
 
-if 'Description' not in st.session_state.inventory.columns: st.session_state.inventory['Description'] = ""
-if 'selected_product_barcode' not in st.session_state: st.session_state.selected_product_barcode = None
+if 'selected_product_barcode' not in st.session_state:
+    st.session_state.selected_product_barcode = None
 
-# --- UI COMPONENTS ---
+# --- UI ---
 def display_header():
     c_logo, c_text = st.columns([1, 5])
     if os.path.exists(LOGO_FILE): c_logo.image(LOGO_FILE, width=130)
     with c_text:
         st.title(st.session_state.settings.get("Store Name", "My Store"))
-        addr, ph, em = st.session_state.settings.get("Address", ""), st.session_state.settings.get("Phone", ""), st.session_state.settings.get("Email", "")
-        st.caption(f"📍 {addr} | 📞 {ph} | ✉️ {em}")
+        addr = st.session_state.settings.get("Address", "")
+        st.caption(f"📍 {addr}")
     st.divider()
 
 def show_product_card(item, detailed=False):
@@ -115,12 +125,15 @@ def show_product_card(item, detailed=False):
         img = item['Image_Data']
         if pd.notnull(img) and img != "": st.image(base64.b64decode(img), use_container_width=True)
         st.subheader(f"Price: ₱{item['Price']:,.2f}")
-        st.write(f"Stock: {item['Quantity']} | Barcode: {item['Barcode']}")
+        st.write(f"Category: {item['Category']}")
+        st.write(f"Description: {item['Description']}")
+        st.caption(f"Barcode: {item['Barcode']}")
     else:
         with st.container(border=True):
+            img = item['Image_Data']
+            if pd.notnull(img) and img != "": st.image(base64.b64decode(img), width=150)
             st.write(f"**{item['Name']}**")
-            st.write(f"₱{item['Price']:,.2f}")
-            if st.button("View", key=f"btn_{item['Barcode']}"):
+            if st.button("View Details", key=f"btn_{item['Barcode']}"):
                 st.session_state.selected_product_barcode = item['Barcode']; st.rerun()
 
 # --- AUTH ---
@@ -128,7 +141,6 @@ def check_auth():
     if "authenticated" not in st.session_state: st.session_state.authenticated = False
     if st.session_state.authenticated:
         with st.sidebar:
-            st.write("👤 Admin")
             if st.button("Logout"): st.session_state.authenticated = False; st.rerun()
         return True
     with st.sidebar:
@@ -154,31 +166,17 @@ if nav == "Customer View":
         match = st.session_state.inventory[st.session_state.inventory['Barcode'] == st.session_state.selected_product_barcode]
         if not match.empty: show_product_card(match.iloc[0], detailed=True)
     else:
-        # Re-restored Scrolling Gallery
-        if not st.session_state.inventory.empty:
-            cards_html = ""
-            for _, row in st.session_state.inventory.iterrows():
-                img_src = f"data:image/png;base64,{row['Image_Data']}" if pd.notnull(row['Image_Data']) and row['Image_Data'] != "" else "https://via.placeholder.com/150"
-                cards_html += f'<div class="slide-card"><img src="{img_src}"><h4>{row["Name"]}</h4><p>₱{row["Price"]:,.2f}</p></div>'
-            st.markdown(f'<div class="scrolling-wrapper">{cards_html}</div>', unsafe_allow_html=True)
-        
-        c1, c2 = st.columns(2)
-        with c1: scanned = qrcode_scanner(key='scanner')
-        with c2: search = st.text_input("Search...")
-        if scanned: st.session_state.selected_product_barcode = str(scanned); st.rerun()
-        
-        items = st.session_state.inventory if not search else st.session_state.inventory[st.session_state.inventory['Name'].str.contains(search, case=False)]
-        for _, row in items.iterrows(): show_product_card(row)
+        for _, row in st.session_state.inventory.iterrows(): show_product_card(row)
 
 elif nav == "Admin Portal":
     if check_auth():
         display_header()
         t1, t2, t3, t4, t5 = st.tabs(["📋 List", "➕ Add", "✏️ Edit", "🏷️ Label", "⚙️ Settings"])
         
-        with t1: # RESTORED INVENTORY LIST
+        with t1:
             st.dataframe(st.session_state.inventory.drop(columns=['Image_Data']), use_container_width=True)
             
-        with t2: # ADD PRODUCT
+        with t2:
             with st.form("add"):
                 b, n, p, q = st.text_input("Barcode"), st.text_input("Name"), st.number_input("Price"), st.number_input("Stock")
                 cat, desc, img = st.text_input("Category"), st.text_area("Description"), st.file_uploader("Image")
@@ -186,31 +184,30 @@ elif nav == "Admin Portal":
                     new_row = pd.DataFrame([{"Barcode": b, "Name": n, "Category": cat, "Price": p, "Quantity": q, "Min_Threshold": 5, "Image_Data": process_image(img), "Description": desc}])
                     st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True); save_all(); st.rerun()
 
-        with t3: # RESTORED EDIT PRODUCT
+        with t3: # FULLY RESTORED EDIT FEATURE
             if not st.session_state.inventory.empty:
                 target = st.selectbox("Select Item to Edit", st.session_state.inventory['Name'].unique())
                 idx = st.session_state.inventory[st.session_state.inventory['Name'] == target].index[0]
                 item = st.session_state.inventory.loc[idx]
                 with st.form("edit"):
                     en, eb, ep, eq = st.text_input("Name", item['Name']), st.text_input("Barcode", item['Barcode']), st.number_input("Price", value=float(item['Price'])), st.number_input("Stock", value=int(item['Quantity']))
-                    if st.form_submit_button("Update"):
-                        st.session_state.inventory.loc[idx, ['Name', 'Barcode', 'Price', 'Quantity']] = [en, eb, ep, eq]
+                    ec, ed = st.text_input("Category", item['Category']), st.text_area("Description", item['Description'])
+                    ei = st.file_uploader("Change Photo")
+                    if st.form_submit_button("Update Everything"):
+                        new_img = process_image(ei) if ei else item['Image_Data']
+                        st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, new_img, ed]
                         save_all(); st.rerun()
 
-        with t4: # RESTORED LABEL TAB
+        with t4:
             if not st.session_state.inventory.empty:
-                l_target = st.selectbox("Product for Label", st.session_state.inventory['Name'].unique())
+                l_target = st.selectbox("Select for Label", st.session_state.inventory['Name'].unique())
                 l_item = st.session_state.inventory[st.session_state.inventory['Name'] == l_target].iloc[0]
                 l_img = generate_custom_label(l_item['Barcode'], l_item['Name'], 300, 200)
                 st.image(l_img)
                 buf = BytesIO(); l_img.save(buf, "PNG")
                 st.download_button("📥 Download Label", buf.getvalue(), "label.png")
 
-        with t5: # RESTORED SETTINGS & RESTORE
-            st.subheader("💾 Data Management")
-            uploaded_backup = st.file_uploader("Restore Inventory from CSV", type=['csv'])
-            if uploaded_backup and st.button("Confirm Restore"):
-                st.session_state.inventory = pd.read_csv(uploaded_backup, dtype={'Barcode': str}); save_all(); st.rerun()
-            
+        with t5:
+            st.subheader("💾 Backup")
             backup_csv = st.session_state.inventory.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Manual Backup", data=backup_csv, file_name="inventory_backup.csv")
+            st.download_button("📥 Download CSV Backup", data=backup_csv, file_name="inventory_backup.csv")
