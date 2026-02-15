@@ -24,7 +24,7 @@ st.markdown("""
     .scrolling-wrapper { display: flex; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 20px; gap: 20px; }
     .scrolling-wrapper::-webkit-scrollbar { height: 8px; }
     .scrolling-wrapper::-webkit-scrollbar-thumb { background-color: #cccccc; border-radius: 10px; }
-    .slide-card { flex: 0 0 auto; width: 250px; background: white; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); padding: 15px; text-align: center; transition: transform 0.3s; border: 1px solid #f0f0f0; }
+    .slide-card { flex: 0 0 auto; width: 250px; background: white; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); padding: 15px; text-align: center; transition: transform 0.3s; border: 1px solid #f0f0f0; position: relative; }
     .slide-card:hover { transform: scale(1.03); }
     .slide-card img { border-radius: 10px; object-fit: cover; height: 150px; width: 100%; margin-bottom: 10px; }
     .stock-badge { position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.95); padding: 4px 8px; border-radius: 5px; font-size: 0.8em; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
@@ -51,7 +51,7 @@ def save_all():
         if os.path.exists(AUTH_FILE):
             admin_df = pd.read_csv(AUTH_FILE)
             conn.update(worksheet="Admin", data=admin_df)
-        st.toast("🚀 Auto-Saved Everything to Cloud!")
+        st.toast("🚀 Store & Inventory Synced to Cloud!")
     except Exception as e:
         st.error(f"Cloud Sync Failed: {e}")
 
@@ -73,10 +73,19 @@ def generate_custom_label(barcode_val, product_name, width, height):
     label = Image.new('RGB', (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(label)
     draw.rectangle([(0, 0), (width - 1, height - 1)], outline="black", width=2)
+    current_y = 15
+    if os.path.exists(LOGO_FILE):
+        logo_size = 60
+        try:
+            logo = Image.open(LOGO_FILE).resize((logo_size, logo_size))
+            label.paste(logo, ((width - logo_size) // 2, current_y))
+            current_y += logo_size + 10
+        except: pass
+    else: current_y += 20
     try: font = ImageFont.truetype("arial.ttf", 20)
     except: font = ImageFont.load_default()
-    draw.text((20, 20), product_name[:20], fill="black", font=font)
-    label.paste(barcode_img.resize((width - 40, 80)), (20, 60))
+    draw.text((max(10, (width - (len(product_name[:20]) * 10)) // 2), current_y), product_name[:20], fill="black", font=font)
+    label.paste(barcode_img.resize((width - 40, 80)), (20, current_y + 30))
     return label
 
 # --- INITIALIZATION ---
@@ -88,15 +97,23 @@ if 'inventory' not in st.session_state:
         for col in required_cols:
             if col not in df.columns: df[col] = ""
         st.session_state.inventory = df
+
         settings_df = conn.read(worksheet="Settings", ttl=0)
         if not settings_df.empty: st.session_state.settings = settings_df.iloc[0].to_dict()
+        
         admin_df = conn.read(worksheet="Admin", ttl=0)
         if not admin_df.empty: admin_df.to_csv(AUTH_FILE, index=False)
     except:
         if os.path.exists(DB_FILE): st.session_state.inventory = pd.read_csv(DB_FILE, dtype={'Barcode': str})
         else: st.session_state.inventory = pd.DataFrame(columns=["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"])
         if os.path.exists(SETTINGS_FILE): st.session_state.settings = pd.read_csv(SETTINGS_FILE).iloc[0].to_dict()
-        else: st.session_state.settings = {"Store Name": "Yadin's Baligya Barato", "Address": "Philippines"}
+        else:
+            st.session_state.settings = {
+                "Store Name": "Yadin's Baligya Barato", "DTI": "Pending", "BIR": "Pending",
+                "Address": "Philippines", "Phone": "", "Email": "",
+                "FB_Montevista": "https://www.facebook.com/yadin.s.baligya.barato",
+                "FB_Compostela": "https://www.facebook.com/yadin.s.baligya.barato.nabunturan"
+            }
 
 if 'selected_product_barcode' not in st.session_state:
     st.session_state.selected_product_barcode = None
@@ -107,8 +124,19 @@ def display_header():
     if os.path.exists(LOGO_FILE): c_logo.image(LOGO_FILE, width=130)
     with c_text:
         st.title(st.session_state.settings.get("Store Name", "My Store"))
-        addr = st.session_state.settings.get("Address", "")
-        st.caption(f"📍 {addr}")
+        addr, dti, bir = st.session_state.settings.get("Address", ""), st.session_state.settings.get("DTI", ""), st.session_state.settings.get("BIR", "")
+        ph, em = st.session_state.settings.get("Phone", ""), st.session_state.settings.get("Email", "")
+        info = f"📍 {addr}"
+        if dti: info += f" | DTI: {dti}"
+        if bir: info += f" | BIR: {bir}"
+        if ph: info += f" | 📞 {ph}"
+        if em: info += f" | ✉️ {em}"
+        st.caption(info)
+        fb1, fb2 = st.session_state.settings.get("FB_Montevista", ""), st.session_state.settings.get("FB_Compostela", "")
+        links_html = ""
+        if fb1: links_html += f'<a class="fb-link" href="{fb1}" target="_blank">🔵 Montevista Branch</a>'
+        if fb2: links_html += f'<a class="fb-link" href="{fb2}" target="_blank">🔵 Compostela Branch</a>'
+        if links_html: st.markdown(links_html, unsafe_allow_html=True)
     st.divider()
 
 def show_product_card(item, detailed=False):
@@ -117,8 +145,10 @@ def show_product_card(item, detailed=False):
         st.title(item['Name'])
         img = item['Image_Data']
         if pd.notnull(img) and img != "": st.image(base64.b64decode(img), use_container_width=True)
+        else: st.image(LOGO_FILE) if os.path.exists(LOGO_FILE) else st.write("No Image")
         st.subheader(f"Price: ₱{float(item['Price']):,.2f}")
-        st.write(f"**Stock:** {item['Quantity']} | **Category:** {item['Category']}")
+        st.write(f"**Category:** {item['Category']}")
+        st.write(f"**Stock:** {item['Quantity']} units")
         st.write(f"**Description:** {item['Description']}")
         st.caption(f"Barcode: {item['Barcode']}")
     else:
@@ -139,13 +169,13 @@ def check_auth():
     if "authenticated" not in st.session_state: st.session_state.authenticated = False
     if st.session_state.authenticated:
         with st.sidebar:
-            st.write("👤 **Logged in as Admin**")
+            st.write("👤 **Admin Account**")
             with st.expander("Update Credentials"):
-                with st.form("upd"):
+                with st.form("upd_creds"):
                     nu, np, ne = st.text_input("User"), st.text_input("Pass", type="password"), st.text_input("Recovery Email")
-                    if st.form_submit_button("Save"):
+                    if st.form_submit_button("Update"):
                         pd.DataFrame([{"user": nu, "pass": np, "email": ne}]).to_csv(AUTH_FILE, index=False)
-                        save_all(); st.success("Credentials Updated!"); st.rerun()
+                        save_all(); st.success("Updated!"); st.rerun()
             if st.button("Logout"): st.session_state.authenticated = False; st.rerun()
         return True
     with st.sidebar:
@@ -154,22 +184,20 @@ def check_auth():
             if st.button("Register"): 
                 pd.DataFrame([{"user": u, "pass": p, "email": e}]).to_csv(AUTH_FILE, index=False); save_all(); st.rerun()
         else:
-            st.title("🔐 Admin Login")
+            st.title("🔐 Login")
             u_in, p_in = st.text_input("User"), st.text_input("Pass", type="password")
             if st.button("Login"):
                 creds = pd.read_csv(AUTH_FILE)
                 if u_in == str(creds.iloc[0]['user']) and p_in == str(creds.iloc[0]['pass']):
                     st.session_state.authenticated = True; st.rerun()
-                else: st.error("Invalid Credentials")
             with st.expander("Forgot Password?"):
-                rec = st.text_input("Enter Recovery Email")
+                rec = st.text_input("Recovery Email")
                 if st.button("Show Password"):
                     creds = pd.read_csv(AUTH_FILE)
                     if rec == str(creds.iloc[0]['email']): st.info(f"Password: {creds.iloc[0]['pass']}")
-                    else: st.error("Email not found")
     return False
 
-# --- NAVIGATION ---
+# --- PAGES ---
 nav = st.sidebar.radio("Navigation", ["Customer View", "Admin Portal"])
 
 if nav == "Customer View":
@@ -190,7 +218,7 @@ if nav == "Customer View":
         
         c1, c2 = st.columns(2)
         with c1: st.write("📷 **Scan QR/Barcode**"); scanned = qrcode_scanner(key='scanner')
-        with c2: st.write("🔍 **Search**"); search = st.text_input("Search by name...")
+        with c2: st.write("🔍 **Search**"); search = st.text_input("Search items...")
         if scanned: st.session_state.selected_product_barcode = str(scanned); st.rerun()
         
         items = st.session_state.inventory if not search else st.session_state.inventory[st.session_state.inventory['Name'].str.contains(search, case=False)]
@@ -205,9 +233,9 @@ elif nav == "Admin Portal":
             st.dataframe(st.session_state.inventory.drop(columns=['Image_Data']), use_container_width=True)
             
         with t2:
-            with st.form("add_prod"):
+            with st.form("add"):
                 b, n, p, q = st.text_input("Barcode"), st.text_input("Name"), st.number_input("Price", 0.0), st.number_input("Stock", 0)
-                cat, desc, img = st.text_input("Category"), st.text_area("Description"), st.file_uploader("Upload Product Image")
+                cat, desc, img = st.text_input("Category", "General"), st.text_area("Description"), st.file_uploader("Product Image")
                 if st.form_submit_button("Save Product"):
                     new_row = pd.DataFrame([{"Barcode": b, "Name": n, "Category": cat, "Price": p, "Quantity": q, "Min_Threshold": 5, "Image_Data": process_image(img), "Description": desc}])
                     st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True); save_all(); st.rerun()
@@ -217,18 +245,18 @@ elif nav == "Admin Portal":
                 target = st.selectbox("Select Product to Edit", st.session_state.inventory['Name'].unique())
                 idx = st.session_state.inventory[st.session_state.inventory['Name'] == target].index[0]
                 item = st.session_state.inventory.loc[idx]
-                with st.form("edit_prod"):
+                with st.form("edit"):
                     en, eb, ep, eq = st.text_input("Name", item['Name']), st.text_input("Barcode", item['Barcode']), st.number_input("Price", value=float(item['Price'])), st.number_input("Stock", value=int(item['Quantity']))
                     ec, ed = st.text_input("Category", item['Category']), st.text_area("Description", item['Description'])
                     ei = st.file_uploader("Change Photo")
-                    if st.form_submit_button("Update Everything"):
+                    if st.form_submit_button("Update Item"):
                         new_img = process_image(ei) if ei else item['Image_Data']
                         st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, new_img, ed]
                         save_all(); st.rerun()
 
         with t4:
             if not st.session_state.inventory.empty:
-                l_target = st.selectbox("Select for Label", st.session_state.inventory['Name'].unique())
+                l_target = st.selectbox("Select Product for Label", st.session_state.inventory['Name'].unique())
                 l_item = st.session_state.inventory[st.session_state.inventory['Name'] == l_target].iloc[0]
                 l_img = generate_custom_label(l_item['Barcode'], l_item['Name'], 300, 200)
                 st.image(l_img)
@@ -236,15 +264,33 @@ elif nav == "Admin Portal":
                 st.download_button("📥 Download Label", buf.getvalue(), f"label_{l_item['Barcode']}.png")
 
         with t5:
-            st.subheader("💾 Management & Restore")
-            uploaded_backup = st.file_uploader("Upload CSV Backup", type=['csv'])
-            if uploaded_backup and st.button("Restore from Backup"):
+            st.subheader("💾 Management & Branding")
+            uploaded_backup = st.file_uploader("Restore Inventory from CSV", type=['csv'])
+            if uploaded_backup and st.button("Confirm Restore"):
                 st.session_state.inventory = pd.read_csv(uploaded_backup, dtype={'Barcode': str}); save_all(); st.rerun()
             
             backup_csv = st.session_state.inventory.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download Manual CSV Backup", data=backup_csv, file_name="inventory_backup.csv")
             
-            with st.form("branding"):
-                sn, ad = st.text_input("Store Name", st.session_state.settings.get('Store Name', '')), st.text_input("Address", st.session_state.settings.get('Address', ''))
-                if st.form_submit_button("Update Branding"):
-                    st.session_state.settings.update({"Store Name": sn, "Address": ad}); save_all(); st.rerun()
+            st.divider()
+            st.write("### 🖼️ Store Branding & Logo")
+            new_logo = st.file_uploader("Upload Store Logo", type=['jpg', 'png'])
+            if new_logo and st.button("Update Logo"):
+                with open(LOGO_FILE, "wb") as f: f.write(new_logo.getbuffer())
+                st.success("Logo Updated!"); st.rerun()
+
+            with st.form("full_branding"):
+                sn = st.text_input("Store Name", st.session_state.settings.get('Store Name', ''))
+                ad = st.text_input("Address", st.session_state.settings.get('Address', ''))
+                dt = st.text_input("DTI Number", st.session_state.settings.get('DTI', ''))
+                br = st.text_input("BIR Number", st.session_state.settings.get('BIR', ''))
+                ph = st.text_input("Phone Number", st.session_state.settings.get('Phone', ''))
+                em = st.text_input("Email", st.session_state.settings.get('Email', ''))
+                fm = st.text_input("Montevista FB Link", st.session_state.settings.get('FB_Montevista', ''))
+                fc = st.text_input("Compostela FB Link", st.session_state.settings.get('FB_Compostela', ''))
+                if st.form_submit_button("Save All Store Details"):
+                    st.session_state.settings.update({
+                        "Store Name": sn, "Address": ad, "DTI": dt, "BIR": br,
+                        "Phone": ph, "Email": em, "FB_Montevista": fm, "FB_Compostela": fc
+                    })
+                    save_all(); st.rerun()
