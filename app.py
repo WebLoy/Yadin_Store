@@ -34,15 +34,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- REPAIRED CONNECTION (STEP 2) ---
-# This matches your simplified Secrets format exactly
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection, 
-                         spreadsheet=st.secrets["spreadsheet"],
-                         service_account=st.secrets["service_account"])
-except Exception as e:
-    st.error(f"Connection Error: {e}. Please check your Secrets format.")
-    st.stop()
+# --- CONNECTION ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- MASTER FUNCTIONS ---
 def save_all(manual=False):
@@ -93,17 +86,21 @@ if 'inventory' not in st.session_state:
     try:
         df = conn.read(worksheet="Inventory", ttl=0)
         df['Barcode'] = df['Barcode'].astype(str)
-        # Repair columns on load to prevent crashes
+        # Ensure columns exist and handle missing image data as empty string
         for col in ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]:
             if col not in df.columns: df[col] = ""
+        df['Image_Data'] = df['Image_Data'].fillna("")
         st.session_state.inventory = df
         settings_df = conn.read(worksheet="Settings", ttl=0)
         if not settings_df.empty: st.session_state.settings = settings_df.iloc[0].to_dict()
         admin_df = conn.read(worksheet="Admin", ttl=0)
         if not admin_df.empty: admin_df.to_csv(AUTH_FILE, index=False)
     except:
-        if os.path.exists(DB_FILE): st.session_state.inventory = pd.read_csv(DB_FILE, dtype={'Barcode': str})
-        else: st.session_state.inventory = pd.DataFrame(columns=["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"])
+        if os.path.exists(DB_FILE): 
+            st.session_state.inventory = pd.read_csv(DB_FILE, dtype={'Barcode': str}).fillna("")
+        else: 
+            st.session_state.inventory = pd.DataFrame(columns=["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"])
+        
         if os.path.exists(SETTINGS_FILE): st.session_state.settings = pd.read_csv(SETTINGS_FILE).iloc[0].to_dict()
         else: st.session_state.settings = {"Store Name": "Yadin's Baligya Barato", "Address": "Philippines", "DTI": "Pending", "BIR": "Pending", "FB_Montevista": "", "FB_Compostela": ""}
 
@@ -136,7 +133,9 @@ def show_product_card(item, detailed=False):
         col1, col2 = st.columns([1, 1])
         with col1:
             img = item['Image_Data']
-            if pd.notnull(img) and img != "": st.image(base64.b64decode(img), use_container_width=True)
+            if pd.notnull(img) and str(img).strip() != "": 
+                try: st.image(base64.b64decode(img), use_container_width=True)
+                except: st.write("Invalid Image Data")
             else: st.image(LOGO_FILE) if os.path.exists(LOGO_FILE) else st.write("No Image")
         with col2:
             st.title(item['Name'])
@@ -154,7 +153,9 @@ def show_product_card(item, detailed=False):
             c1, c2 = st.columns([1, 2])
             with c1:
                 img = item['Image_Data']
-                if pd.notnull(img) and img != "": st.image(base64.b64decode(img), use_container_width=True)
+                if pd.notnull(img) and str(img).strip() != "": 
+                    try: st.image(base64.b64decode(img), use_container_width=True)
+                    except: st.write("No Image")
                 else: st.write("No Image")
             with c2:
                 st.subheader(item['Name'])
@@ -199,7 +200,7 @@ if nav == "Customer View":
         if not st.session_state.inventory.empty:
             cards_html = ""
             for _, row in st.session_state.inventory.iterrows():
-                img_src = f"data:image/png;base64,{row['Image_Data']}" if pd.notnull(row['Image_Data']) and row['Image_Data'] != "" else "https://via.placeholder.com/150"
+                img_src = f"data:image/png;base64,{row['Image_Data']}" if pd.notnull(row['Image_Data']) and str(row['Image_Data']).strip() != "" else "https://via.placeholder.com/150"
                 qty = int(row['Quantity'])
                 status = '<span style="color:red;">🔴 SOLD OUT</span>' if qty == 0 else (f'<span style="color:orange;">⚠️ Low: {qty}</span>' if qty <= 5 else "")
                 cards_html += f'<div class="slide-card"><div style="position:relative;"><img src="{img_src}">{"<div class=\"stock-badge\">" + status + "</div>" if status else ""}</div><h4>{row["Name"]}</h4><p style="color:#e63946; font-weight:bold;">₱{float(row["Price"]):,.2f}</p></div>'
@@ -243,7 +244,9 @@ elif nav == "Admin Portal":
                     
                     c_upd, c_del = st.columns(2)
                     if c_upd.form_submit_button("💾 Update"):
-                        st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, process_image(ei) if ei else item['Image_Data'], ed]; save_all(); st.rerun()
+                        new_img = process_image(ei) if ei else item['Image_Data']
+                        st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, new_img, ed]
+                        save_all(); st.rerun()
                     
                     delete_trigger = c_del.form_submit_button("🗑️ Delete Product")
                     if delete_trigger:
@@ -269,18 +272,14 @@ elif nav == "Admin Portal":
                 buf = BytesIO(); l_img.save(buf, "PNG")
                 st.download_button("📥 Download Label", buf.getvalue(), f"label_{l_item['Barcode']}.png")
         with t5:
-            st.subheader("💾 Backup & Restore")
+            st.subheader("💾 Management & Branding")
             uploaded_backup = st.file_uploader("Restore Inventory from CSV", type=['csv'])
             if uploaded_backup and st.button("Confirm Restore"):
-                # RESTORE PROTECTION: Fix missing columns and images on the fly
-                new_data = pd.read_csv(uploaded_backup, dtype={'Barcode': str})
+                new_data = pd.read_csv(uploaded_backup, dtype={'Barcode': str}).fillna("")
                 required_cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
                 for col in required_cols:
                     if col not in new_data.columns:
                         new_data[col] = "" 
-                
-                # Critical fix for missing images: preserve Image_Data values
-                new_data['Image_Data'] = new_data['Image_Data'].fillna("")
                 
                 st.session_state.inventory = new_data
                 save_all(); st.rerun()
