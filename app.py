@@ -86,25 +86,18 @@ if 'inventory' not in st.session_state:
     try:
         df = conn.read(worksheet="Inventory", ttl=0)
         df['Barcode'] = df['Barcode'].astype(str)
-        # CRITICAL FIX: Ensure all columns exist regardless of the file source
-        cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
-        for col in cols:
+        # Ensure columns exist and handle missing image data as empty string
+        for col in ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]:
             if col not in df.columns: df[col] = ""
         df['Image_Data'] = df['Image_Data'].fillna("")
         st.session_state.inventory = df
-        
         settings_df = conn.read(worksheet="Settings", ttl=0)
         if not settings_df.empty: st.session_state.settings = settings_df.iloc[0].to_dict()
         admin_df = conn.read(worksheet="Admin", ttl=0)
         if not admin_df.empty: admin_df.to_csv(AUTH_FILE, index=False)
     except:
         if os.path.exists(DB_FILE): 
-            df = pd.read_csv(DB_FILE, dtype={'Barcode': str})
-            # CRITICAL FIX: Ensure all columns exist in local CSV too
-            cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
-            for col in cols:
-                if col not in df.columns: df[col] = ""
-            st.session_state.inventory = df.fillna("")
+            st.session_state.inventory = pd.read_csv(DB_FILE, dtype={'Barcode': str}).fillna("")
         else: 
             st.session_state.inventory = pd.DataFrame(columns=["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"])
         
@@ -139,7 +132,7 @@ def show_product_card(item, detailed=False):
         st.button("⬅️ Back to Shop", on_click=lambda: st.session_state.update(selected_product_barcode=None))
         col1, col2 = st.columns([1, 1])
         with col1:
-            img = item.get('Image_Data', "")
+            img = item['Image_Data']
             if pd.notnull(img) and str(img).strip() != "": 
                 try: st.image(base64.b64decode(img), use_container_width=True)
                 except: st.write("Invalid Image Data")
@@ -159,7 +152,7 @@ def show_product_card(item, detailed=False):
         with st.container(border=True):
             c1, c2 = st.columns([1, 2])
             with c1:
-                img = item.get('Image_Data', "")
+                img = item['Image_Data']
                 if pd.notnull(img) and str(img).strip() != "": 
                     try: st.image(base64.b64decode(img), use_container_width=True)
                     except: st.write("No Image")
@@ -207,9 +200,7 @@ if nav == "Customer View":
         if not st.session_state.inventory.empty:
             cards_html = ""
             for _, row in st.session_state.inventory.iterrows():
-                # SAFETY: Added get() and empty check to prevent KeyError
-                img_data = row.get('Image_Data', "")
-                img_src = f"data:image/png;base64,{img_data}" if pd.notnull(img_data) and str(img_data).strip() != "" else "https://via.placeholder.com/150"
+                img_src = f"data:image/png;base64,{row['Image_Data']}" if pd.notnull(row['Image_Data']) and str(row['Image_Data']).strip() != "" else "https://via.placeholder.com/150"
                 qty = int(row['Quantity'])
                 status = '<span style="color:red;">🔴 SOLD OUT</span>' if qty == 0 else (f'<span style="color:orange;">⚠️ Low: {qty}</span>' if qty <= 5 else "")
                 cards_html += f'<div class="slide-card"><div style="position:relative;"><img src="{img_src}">{"<div class=\"stock-badge\">" + status + "</div>" if status else ""}</div><h4>{row["Name"]}</h4><p style="color:#e63946; font-weight:bold;">₱{float(row["Price"]):,.2f}</p></div>'
@@ -252,7 +243,7 @@ elif nav == "Admin Portal":
                     
                     c_upd, c_del = st.columns(2)
                     if c_upd.form_submit_button("💾 Update"):
-                        new_img = process_image(ei) if ei else item.get('Image_Data', "")
+                        new_img = process_image(ei) if ei else item['Image_Data']
                         st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, new_img, ed]
                         save_all(); st.rerun()
                     
@@ -288,7 +279,8 @@ elif nav == "Admin Portal":
                     label="📥 Download Full Inventory Backup (CSV)",
                     data=csv_data,
                     file_name=f"inventory_backup_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
-                    mime='text/csv'
+                    mime='text/csv',
+                    help="Click here to save a full copy of your inventory, including all image data, to your computer."
                 )
             with col_b:
                 uploaded_backup = st.file_uploader("Restore from Backup", type=['csv'])
@@ -309,5 +301,5 @@ elif nav == "Admin Portal":
                 sn, ad, dt, br, ph, em, fm, fc = st.text_input("Store Name", st.session_state.settings.get('Store Name','')), st.text_input("Address", st.session_state.settings.get('Address','')), st.text_input("DTI", st.session_state.settings.get('DTI','')), st.text_input("BIR", st.session_state.settings.get('BIR','')), st.text_input("Phone", st.session_state.settings.get('Phone','')), st.text_input("Email", st.session_state.settings.get('Email','')), st.text_input("Montevista FB", st.session_state.settings.get('FB_Montevista','')), st.text_input("Compostela FB", st.session_state.settings.get('FB_Compostela',''))
                 if st.form_submit_button("💾 Save All Store Details & Sync"):
                     st.session_state.settings.update({"Store Name": sn, "Address": ad, "DTI": dt, "BIR": br, "Phone": ph, "Email": em, "FB_Montevista": fm, "FB_Compostela": fc})
-                    save_all(manual=True)
+                    save_all(manual=True) # This triggers both CSV and Google Sheets save
                     st.rerun()
