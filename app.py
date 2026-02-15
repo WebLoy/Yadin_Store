@@ -176,7 +176,7 @@ def check_auth():
                 rec = st.text_input("Recovery Email")
                 if st.button("Recover"):
                     creds = pd.read_csv(AUTH_FILE)
-                    if rec == str(creds.iloc[0]['email']): st.info(f"Password: {creds.iloc[0]['pass']}")
+                    if rec == str(creds.iloc[0]['email']): st.info(f"Pass: {creds.iloc[0]['pass']}")
     return False
 
 # --- PAGES ---
@@ -215,20 +215,38 @@ elif nav == "Admin Portal":
             with st.form("add"):
                 b, n, p, q = st.text_input("Barcode"), st.text_input("Name"), st.number_input("Price", 0.0), st.number_input("Stock", 0)
                 cat, desc, img = st.text_input("Category", "General"), st.text_area("Description"), st.file_uploader("Image")
-                if st.form_submit_button("Save Product"):
+                if st.form_submit_button("Save"):
                     new_row = pd.DataFrame([{"Barcode": b, "Name": n, "Category": cat, "Price": p, "Quantity": q, "Min_Threshold": 5, "Image_Data": process_image(img), "Description": desc}])
                     st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True); save_all(); st.rerun()
         with t3:
             if not st.session_state.inventory.empty:
-                target = st.selectbox("Select Product to Edit", st.session_state.inventory['Name'].unique())
+                target = st.selectbox("Select to Edit", st.session_state.inventory['Name'].unique())
                 idx = st.session_state.inventory[st.session_state.inventory['Name'] == target].index[0]
                 item = st.session_state.inventory.loc[idx]
                 with st.form("edit"):
                     en, eb, ep, eq = st.text_input("Name", item['Name']), st.text_input("Barcode", item['Barcode']), st.number_input("Price", value=float(item['Price'])), st.number_input("Stock", value=int(item['Quantity']))
                     ec, ed, ei = st.text_input("Category", item['Category']), st.text_area("Description", item['Description']), st.file_uploader("Change Photo")
-                    if st.form_submit_button("Update Everything"):
-                        new_img = process_image(ei) if ei else item['Image_Data']
-                        st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, new_img, ed]; save_all(); st.rerun()
+                    
+                    c_upd, c_del = st.columns(2)
+                    if c_upd.form_submit_button("💾 Update"):
+                        st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, process_image(ei) if ei else item['Image_Data'], ed]; save_all(); st.rerun()
+                    
+                    # --- RESTORED FEATURE: DELETE CONFIRMATION ---
+                    delete_trigger = c_del.form_submit_button("🗑️ Delete Product")
+                    if delete_trigger:
+                        st.session_state.confirm_delete = idx
+                
+                if "confirm_delete" in st.session_state and st.session_state.confirm_delete == idx:
+                    st.error(f"⚠️ Are you sure you want to delete '{item['Name']}'?")
+                    cd1, cd2 = st.columns(2)
+                    if cd1.button("🔥 YES, DELETE"):
+                        st.session_state.inventory = st.session_state.inventory.drop(idx)
+                        del st.session_state.confirm_delete
+                        save_all(); st.rerun()
+                    if cd2.button("❌ CANCEL"):
+                        del st.session_state.confirm_delete
+                        st.rerun()
+
         with t4:
             if not st.session_state.inventory.empty:
                 l_target = st.selectbox("Product for Label", st.session_state.inventory['Name'].unique())
