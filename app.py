@@ -217,7 +217,6 @@ if nav == "Customer View":
 elif nav == "Admin Portal":
     if check_auth():
         display_header()
-        if st.button("🔄 Force Cloud Sync"): save_all(manual=True)
         t1, t2, t3, t4, t5 = st.tabs(["📋 List", "➕ Add", "✏️ Edit", "🏷️ Label", "⚙️ Settings"])
         
         with t1:
