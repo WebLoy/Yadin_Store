@@ -36,9 +36,13 @@ st.markdown("""
 
 # --- REPAIRED CONNECTION (STEP 2) ---
 # This matches your simplified Secrets format exactly
-conn = st.connection("gsheets", type=GSheetsConnection, 
-                     spreadsheet=st.secrets["spreadsheet"],
-                     service_account=st.secrets["service_account"])
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection, 
+                         spreadsheet=st.secrets["spreadsheet"],
+                         service_account=st.secrets["service_account"])
+except Exception as e:
+    st.error(f"Connection Error: {e}. Please check your Secrets format.")
+    st.stop()
 
 # --- MASTER FUNCTIONS ---
 def save_all(manual=False):
@@ -89,7 +93,8 @@ if 'inventory' not in st.session_state:
     try:
         df = conn.read(worksheet="Inventory", ttl=0)
         df['Barcode'] = df['Barcode'].astype(str)
-        for col in ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]:
+        required_cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
+        for col in required_cols:
             if col not in df.columns: df[col] = ""
         st.session_state.inventory = df
         settings_df = conn.read(worksheet="Settings", ttl=0)
@@ -267,14 +272,14 @@ elif nav == "Admin Portal":
             st.subheader("💾 Backup & Restore")
             uploaded_backup = st.file_uploader("Restore Inventory (CSV)", type=['csv'])
             if uploaded_backup and st.button("Confirm Restore"):
-                # REPAIRED RESTORE: Ensure Image_Data is preserved and cleaned
+                # REPAIRED RESTORE: Safety check for all columns and images
                 new_data = pd.read_csv(uploaded_backup, dtype={'Barcode': str})
                 required_cols = ["Barcode", "Name", "Category", "Price", "Quantity", "Min_Threshold", "Image_Data", "Description"]
                 for col in required_cols:
                     if col not in new_data.columns:
                         new_data[col] = "" 
                 
-                # Critical fix for missing images: fill NaN Image_Data with empty strings
+                # Critical fix for images: fill missing data with empty string so pd.notnull still works
                 new_data['Image_Data'] = new_data['Image_Data'].fillna("")
                 
                 st.session_state.inventory = new_data
