@@ -39,6 +39,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- MASTER FUNCTIONS ---
 def save_all(manual=False):
+    """Saves to local CSV AND Auto-Saves to Google Sheets."""
     st.session_state.inventory.to_csv(DB_FILE, index=False)
     pd.DataFrame([st.session_state.settings]).to_csv(SETTINGS_FILE, index=False)
     try:
@@ -175,7 +176,7 @@ def check_auth():
                 rec = st.text_input("Recovery Email")
                 if st.button("Recover"):
                     creds = pd.read_csv(AUTH_FILE)
-                    if rec == str(creds.iloc[0]['email']): st.info(f"Pass: {creds.iloc[0]['pass']}")
+                    if rec == str(creds.iloc[0]['email']): st.info(f"Password: {creds.iloc[0]['pass']}")
     return False
 
 # --- PAGES ---
@@ -213,20 +214,21 @@ elif nav == "Admin Portal":
         with t2:
             with st.form("add"):
                 b, n, p, q = st.text_input("Barcode"), st.text_input("Name"), st.number_input("Price", 0.0), st.number_input("Stock", 0)
-                cat, desc, img = st.text_input("Category"), st.text_area("Description"), st.file_uploader("Image")
-                if st.form_submit_button("Save"):
+                cat, desc, img = st.text_input("Category", "General"), st.text_area("Description"), st.file_uploader("Image")
+                if st.form_submit_button("Save Product"):
                     new_row = pd.DataFrame([{"Barcode": b, "Name": n, "Category": cat, "Price": p, "Quantity": q, "Min_Threshold": 5, "Image_Data": process_image(img), "Description": desc}])
                     st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True); save_all(); st.rerun()
         with t3:
             if not st.session_state.inventory.empty:
-                target = st.selectbox("Select to Edit", st.session_state.inventory['Name'].unique())
+                target = st.selectbox("Select Product to Edit", st.session_state.inventory['Name'].unique())
                 idx = st.session_state.inventory[st.session_state.inventory['Name'] == target].index[0]
                 item = st.session_state.inventory.loc[idx]
                 with st.form("edit"):
                     en, eb, ep, eq = st.text_input("Name", item['Name']), st.text_input("Barcode", item['Barcode']), st.number_input("Price", value=float(item['Price'])), st.number_input("Stock", value=int(item['Quantity']))
                     ec, ed, ei = st.text_input("Category", item['Category']), st.text_area("Description", item['Description']), st.file_uploader("Change Photo")
                     if st.form_submit_button("Update Everything"):
-                        st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, process_image(ei) if ei else item['Image_Data'], ed]; save_all(); st.rerun()
+                        new_img = process_image(ei) if ei else item['Image_Data']
+                        st.session_state.inventory.loc[idx] = [eb, en, ec, ep, eq, 5, new_img, ed]; save_all(); st.rerun()
         with t4:
             if not st.session_state.inventory.empty:
                 l_target = st.selectbox("Product for Label", st.session_state.inventory['Name'].unique())
@@ -243,7 +245,7 @@ elif nav == "Admin Portal":
             if new_logo and st.button("Save Logo"):
                 with open(LOGO_FILE, "wb") as f: f.write(new_logo.getbuffer())
                 st.success("Logo Updated!"); st.rerun()
-            with st.form("set_branding"):
+            with st.form("branding"):
                 sn, ad, dt, br, ph, em, fm, fc = st.text_input("Store Name", st.session_state.settings.get('Store Name','')), st.text_input("Address", st.session_state.settings.get('Address','')), st.text_input("DTI", st.session_state.settings.get('DTI','')), st.text_input("BIR", st.session_state.settings.get('BIR','')), st.text_input("Phone", st.session_state.settings.get('Phone','')), st.text_input("Email", st.session_state.settings.get('Email','')), st.text_input("Montevista FB", st.session_state.settings.get('FB_Montevista','')), st.text_input("Compostela FB", st.session_state.settings.get('FB_Compostela',''))
-                if st.form_submit_button("Save Branding"):
+                if st.form_submit_button("Save Details"):
                     st.session_state.settings.update({"Store Name": sn, "Address": ad, "DTI": dt, "BIR": br, "Phone": ph, "Email": em, "FB_Montevista": fm, "FB_Compostela": fc}); save_all(); st.rerun()
